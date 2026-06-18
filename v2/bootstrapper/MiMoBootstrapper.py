@@ -69,6 +69,9 @@ DEP_HASHES = {
 MAX_REPAIR_ATTEMPTS = 3
 
 
+STATE_SCHEMA_VERSION = 1
+
+
 class StateManager:
     def __init__(self, install_dir):
         self.install_dir = install_dir
@@ -77,12 +80,14 @@ class StateManager:
 
     def _load(self):
         default = {
+            "schema_version": STATE_SCHEMA_VERSION,
             "version": get_version(),
             "install_dir": self.install_dir,
             "installed_at": None,
             "install_result": "pending",
             "last_health_check": None,
             "last_health_result": "unknown",
+            "last_install_time": None,
             "deps": {
                 "node": {"status": "not_installed", "version": ""},
                 "npm": {"status": "not_installed", "version": ""},
@@ -100,6 +105,7 @@ class StateManager:
             try:
                 with open(self.state_path, "r") as f:
                     saved = json.load(f)
+                saved["schema_version"] = STATE_SCHEMA_VERSION
                 for k, v in default.items():
                     if k not in saved:
                         saved[k] = v
@@ -140,6 +146,7 @@ class StateManager:
 
     def mark_install_result(self, result):
         self.state["install_result"] = result
+        self.state["last_install_time"] = datetime.now().isoformat()
         self.save()
 
 
@@ -301,16 +308,20 @@ def add_to_path(dirs):
         return False
 
 
-def download_file(url, dest, progress_cb=None):
-    try:
-        def report(block, block_size, total_size):
-            if progress_cb and total_size > 0:
-                pct = min(block * block_size / total_size * 100, 100)
-                progress_cb(pct)
-        urllib.request.urlretrieve(url, dest, reporthook=report)
-        return True
-    except Exception:
-        return False
+def download_file(url, dest, progress_cb=None, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            def report(block, block_size, total_size):
+                if progress_cb and total_size > 0:
+                    pct = min(block * block_size / total_size * 100, 100)
+                    progress_cb(pct)
+            urllib.request.urlretrieve(url, dest, reporthook=report)
+            return True
+        except Exception:
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+            continue
+    return False
 
 
 def verify_hash(filepath, expected_sha256):
@@ -547,14 +558,61 @@ class HealthChecker:
         return False
 
 
+MAX_BOOTSTRAP_LOG_SIZE = 5 * 1024 * 1024
+MAX_BOOTSTRAP_LOG_BACKUPS = 3
+
+
+def _rotate_log(log_path):
+    if not os.path.exists(log_path):
+        return
+    if os.path.getsize(log_path) < MAX_BOOTSTRAP_LOG_SIZE:
+        return
+    for i in range(MAX_BOOTSTRAP_LOG_BACKUPS - 1, 0, -1):
+        src = f"{log_path}.{i}.log"
+        dst = f"{log_path}.{i+1}.log"
+        if os.path.exists(src):
+            if os.path.exists(dst):
+                os.remove(dst)
+            os.rename(src, dst)
+    dst = f"{log_path}.1.log"
+    if os.path.exists(dst):
+        os.remove(dst)
+    os.rename(log_path, dst)
+
+
 def _write_bootstrap_log(install_dir, entries):
     log_dir = os.path.join(install_dir, "logs")
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "bootstrapper.log")
     try:
+        _rotate_log(log_path)
         with open(log_path, "a", encoding="utf-8") as f:
             for ts, level, msg in entries:
                 f.write(f"[{ts}] [{level}] {msg}\n")
+    except Exception:
+        pass
+
+
+def _acquire_lock(install_dir):
+    lock_path = os.path.join(install_dir, "install.lock")
+    try:
+        if os.path.exists(lock_path):
+            age = time.time() - os.path.getmtime(lock_path)
+            if age > 600:
+                os.remove(lock_path)
+            else:
+                return None
+        with open(lock_path, "w") as f:
+            f.write(str(os.getpid()))
+        return lock_path
+    except Exception:
+        return None
+
+
+def _release_lock(lock_path):
+    try:
+        if lock_path and os.path.exists(lock_path):
+            os.remove(lock_path)
     except Exception:
         pass
 
@@ -568,38 +626,47 @@ def first_run(install_dir, progress_cb=None):
     ensure_dirs(install_dir, portable=portable)
     log_dir = get_log_dir(install_dir, portable=portable)
     logger = MiMoLogger("bootstrapper", log_dir, get_version())
+
+    lock_path = _acquire_lock(install_dir)
+    if lock_path is None:
+        logger.error("Another installation is running (install.lock exists)")
+        return False
+
     logger.install_start()
     log_entries = [(_ts(), "INFO", "Bootstrapper started")]
     state = StateManager(install_dir)
     state.mark_install_result("installing")
     state.save()
 
-    checker = HealthChecker(install_dir, logger)
-    issues = checker.health_check()
-    log_entries.append((_ts(), "INFO", f"Health check: {len(issues)} issue(s) — {issues}"))
+    try:
+        checker = HealthChecker(install_dir, logger)
+        issues = checker.health_check()
+        log_entries.append((_ts(), "INFO", f"Health check: {len(issues)} issue(s) — {issues}"))
 
-    if issues:
-        repaired = checker.auto_repair(issues, progress_cb)
-        log_entries.append((_ts(), "INFO", f"Repaired: {repaired}"))
-        issues_after = checker.health_check()
-        log_entries.append((_ts(), "INFO", f"Post-repair health: {len(issues_after)} issue(s) — {issues_after}"))
-    else:
-        issues_after = []
-        log_entries.append((_ts(), "INFO", "All components healthy"))
+        if issues:
+            repaired = checker.auto_repair(issues, progress_cb)
+            log_entries.append((_ts(), "INFO", f"Repaired: {repaired}"))
+            issues_after = checker.health_check()
+            log_entries.append((_ts(), "INFO", f"Post-repair health: {len(issues_after)} issue(s) — {issues_after}"))
+        else:
+            issues_after = []
+            log_entries.append((_ts(), "INFO", "All components healthy"))
 
-    if issues_after:
-        state.mark_install_result("partial")
-        log_entries.append((_ts(), "WARNING", f"Install partial — remaining: {issues_after}"))
-    else:
-        state.mark_install_result("success")
-        log_entries.append((_ts(), "INFO", "Install success"))
+        if issues_after:
+            state.mark_install_result("partial")
+            log_entries.append((_ts(), "WARNING", f"Install partial — remaining: {issues_after}"))
+        else:
+            state.mark_install_result("success")
+            log_entries.append((_ts(), "INFO", "Install success"))
 
-    state.mark_installed()
-    state.increment_launches()
-    state.save()
-    _write_bootstrap_log(install_dir, log_entries)
-    logger.install_complete()
-    return len(issues_after) == 0
+        state.mark_installed()
+        state.increment_launches()
+        state.save()
+        _write_bootstrap_log(install_dir, log_entries)
+        logger.install_complete()
+        return len(issues_after) == 0
+    finally:
+        _release_lock(lock_path)
 
 
 def health_check_only(install_dir):
