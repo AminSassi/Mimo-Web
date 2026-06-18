@@ -1,6 +1,6 @@
 [Setup]
 AppName=MiMo Auto
-AppVersion=2.0.0
+AppVersion=2.2.0
 AppPublisher=MiMo Team
 AppPublisherURL=https://mimo.xiaomi.com
 AppSupportURL=https://mimo.xiaomi.com/support
@@ -19,10 +19,10 @@ DisableFinishedPage=yes
 SetupIconFile=mimo.ico
 UninstallDisplayIcon={app}\mimo_launch.exe
 AppId={{9C12A3B4-55D1-4A88-9F11-ABC123456789}
-VersionInfoVersion=2.0.0.0
+VersionInfoVersion=2.2.0.0
 VersionInfoDescription=MiMo Auto Installer
 VersionInfoProductName=MiMo Auto
-VersionInfoProductVersion=2.0.0
+VersionInfoProductVersion=2.2.0
 MinVersion=10.0.17763
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -58,7 +58,7 @@ Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; Value
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "MIMO_HOME"; ValueData: "{app}"; Flags: uninsdeletevalue; Check: not IsPortableMode
 
 [Run]
-Filename: "{app}\bootstrapper\MiMoBootstrapper.exe"; Parameters: "--first-run --install-dir ""{app}"""; StatusMsg: "Setting up MiMo Auto..."; Flags: nowait postinstall runascurrentuser skipifnotsilent
+Filename: "{app}\bootstrapper\MiMoBootstrapper.exe"; Parameters: "--first-run --install-dir ""{app}"""; StatusMsg: "Installing dependencies (Node.js, Git, MiMo CLI)..."; Flags: nowait postinstall
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\data"

@@ -64,6 +64,17 @@ def clean():
     print("  Done")
 
 
+EXCLUDE_MODULES = [
+    "torch", "torchvision", "torchaudio",
+    "scipy", "numpy", "pandas",
+    "matplotlib", "PIL", "cv2",
+    "transformers", "accelerate", "sentencepiece",
+    "timm", "einops", "safetensors",
+    "gradio", "tensorboard",
+    "tkinter", "customtkinter",
+]
+
+
 def build_bootstrapper(version):
     print("[2/6] Building MiMoBootstrapper.exe...")
     cmd = [
@@ -76,8 +87,10 @@ def build_bootstrapper(version):
         "--clean",
         "--noconfirm",
         "--paths", SCRIPT_DIR,
-        os.path.join(SCRIPT_DIR, "bootstrapper", "MiMoBootstrapper.py")
     ]
+    for mod in EXCLUDE_MODULES:
+        cmd.extend(["--exclude-module", mod])
+    cmd.append(os.path.join(SCRIPT_DIR, "bootstrapper", "MiMoBootstrapper.py"))
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"  FAILED:\n{result.stderr[-500:]}")
@@ -98,8 +111,10 @@ def build_launcher(version):
         "--clean",
         "--noconfirm",
         "--paths", SCRIPT_DIR,
-        os.path.join(SCRIPT_DIR, "launcher", "mimo_launch.py")
     ]
+    for mod in EXCLUDE_MODULES:
+        cmd.extend(["--exclude-module", mod])
+    cmd.append(os.path.join(SCRIPT_DIR, "launcher", "mimo_launch.py"))
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"  FAILED:\n{result.stderr[-500:]}")
@@ -110,6 +125,7 @@ def build_launcher(version):
 
 def build_gui(version):
     print("[4/6] Building MiMoInstaller.exe (GUI)...")
+    GUI_EXCLUDES = [m for m in EXCLUDE_MODULES if m not in ("tkinter", "customtkinter", "PIL")]
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",
@@ -122,8 +138,10 @@ def build_gui(version):
         "--hidden-import", "customtkinter",
         "--hidden-import", "core",
         "--paths", SCRIPT_DIR,
-        os.path.join(SCRIPT_DIR, "mimo_installer_v2.py")
     ]
+    for mod in GUI_EXCLUDES:
+        cmd.extend(["--exclude-module", mod])
+    cmd.append(os.path.join(SCRIPT_DIR, "mimo_installer_v2.py"))
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"  FAILED:\n{result.stderr[-500:]}")
