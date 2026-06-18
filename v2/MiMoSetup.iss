@@ -57,18 +57,19 @@ Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "A
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{app}"; Flags: uninsdeletevalue; Check: not IsPortableMode
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "MIMO_HOME"; ValueData: "{app}"; Flags: uninsdeletevalue; Check: not IsPortableMode
 
-[Run]
-Filename: "{app}\bootstrapper\MiMoBootstrapper.exe"; Parameters: "--first-run --install-dir ""{app}"""; StatusMsg: "Installing dependencies (Node.js, Git, MiMo CLI)..."; Flags: postinstall
-
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\data"
 Type: filesandordirs; Name: "{app}\logs"
 Type: files; Name: "{app}\install_state.json"
 Type: files; Name: "{app}\portable.flag"
 
+[Run]
+Filename: "{app}\bootstrapper\MiMoBootstrapper.exe"; Parameters: "--first-run --install-dir ""{app}"""; StatusMsg: "Installing dependencies (Node.js, Git, MiMo CLI)..."; Flags: postinstall runminimized waituntilterminated; AfterInstall: CheckBootstrapResult
+
 [Code]
 var
   InstallMode: Integer;
+  BootstrapOK: Boolean;
 
 function IsPortableMode: Boolean;
 begin
@@ -78,4 +79,30 @@ end;
 procedure InitializeWizard;
 begin
   InstallMode := 0;
+  BootstrapOK := True;
+end;
+
+procedure CheckBootstrapResult;
+var
+  StateFile: String;
+  Content: AnsiString;
+begin
+  StateFile := ExpandConstant('{app}\install_state.json');
+  if not FileExists(StateFile) then
+  begin
+    BootstrapOK := False;
+    MsgBox('Bootstrapper did not create install_state.json. Installation may be incomplete.' + #13#10 + #13#10 + 'Check the logs for details.', mbError, MB_OK);
+    Exit;
+  end;
+  if not LoadStringFromFile(StateFile, Content) then
+  begin
+    BootstrapOK := False;
+    MsgBox('Failed to read install_state.json. Installation may be incomplete.', mbError, MB_OK);
+    Exit;
+  end;
+  if Pos('"last_health_result": "issues_found"', Content) > 0 then
+  begin
+    BootstrapOK := False;
+    MsgBox('Some dependencies failed to install.' + #13#10 + #13#10 + 'The installer will still complete, but MiMo may not work until you run Repair.' + #13#10 + #13#10 + 'You can launch MiMo Installer from the Start Menu to repair.', mbInformation, MB_OK);
+  end;
 end;
