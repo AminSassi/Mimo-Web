@@ -80,14 +80,15 @@ class StateManager:
             "version": get_version(),
             "install_dir": self.install_dir,
             "installed_at": None,
+            "install_result": "pending",
             "last_health_check": None,
             "last_health_result": "unknown",
             "deps": {
-                "node": {"status": "unknown", "version": ""},
-                "npm": {"status": "unknown", "version": ""},
-                "git": {"status": "unknown", "version": ""},
+                "node": {"status": "not_installed", "version": ""},
+                "npm": {"status": "not_installed", "version": ""},
+                "git": {"status": "not_installed", "version": ""},
             },
-            "mimo": {"status": "unknown", "version": ""},
+            "mimo": {"status": "not_installed", "version": ""},
             "portable": os.path.exists(os.path.join(self.install_dir, PORTABLE_FLAG)),
             "launches": 0,
             "repairs": 0,
@@ -135,6 +136,10 @@ class StateManager:
 
     def mark_installed(self):
         self.state["installed_at"] = self.state.get("installed_at") or datetime.now().isoformat()
+        self.save()
+
+    def mark_install_result(self, result):
+        self.state["install_result"] = result
         self.save()
 
 
@@ -542,21 +547,55 @@ class HealthChecker:
         return False
 
 
+def _write_bootstrap_log(install_dir, entries):
+    log_dir = os.path.join(install_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "bootstrapper.log")
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            for ts, level, msg in entries:
+                f.write(f"[{ts}] [{level}] {msg}\n")
+    except Exception:
+        pass
+
+
+def _ts():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def first_run(install_dir, progress_cb=None):
     ensure_dirs(install_dir)
     logger = MiMoLogger("bootstrapper", get_log_dir(install_dir), get_version())
     logger.install_start()
+    log_entries = [(_ts(), "INFO", "Bootstrapper started")]
+    state = StateManager(install_dir)
+    state.mark_install_result("installing")
+    state.save()
+
     checker = HealthChecker(install_dir, logger)
     issues = checker.health_check()
+    log_entries.append((_ts(), "INFO", f"Health check: {len(issues)} issue(s) — {issues}"))
+
     if issues:
         repaired = checker.auto_repair(issues, progress_cb)
+        log_entries.append((_ts(), "INFO", f"Repaired: {repaired}"))
         issues_after = checker.health_check()
+        log_entries.append((_ts(), "INFO", f"Post-repair health: {len(issues_after)} issue(s) — {issues_after}"))
     else:
         issues_after = []
-    state = StateManager(install_dir)
+        log_entries.append((_ts(), "INFO", "All components healthy"))
+
+    if issues_after:
+        state.mark_install_result("partial")
+        log_entries.append((_ts(), "WARNING", f"Install partial — remaining: {issues_after}"))
+    else:
+        state.mark_install_result("success")
+        log_entries.append((_ts(), "INFO", "Install success"))
+
     state.mark_installed()
     state.increment_launches()
     state.save()
+    _write_bootstrap_log(install_dir, log_entries)
     logger.install_complete()
     return len(issues_after) == 0
 

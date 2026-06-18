@@ -91,7 +91,7 @@ begin
   if not FileExists(StateFile) then
   begin
     BootstrapOK := False;
-    MsgBox('Bootstrapper did not create install_state.json. Installation may be incomplete.' + #13#10 + #13#10 + 'Check the logs for details.', mbError, MB_OK);
+    MsgBox('Bootstrapper did not create install_state.json. Installation may be incomplete.' + #13#10 + #13#10 + 'Check the logs at:' + #13#10 + '{app}\logs\bootstrapper.log', mbError, MB_OK);
     Exit;
   end;
   if not LoadStringFromFile(StateFile, Content) then
@@ -100,9 +100,14 @@ begin
     MsgBox('Failed to read install_state.json. Installation may be incomplete.', mbError, MB_OK);
     Exit;
   end;
-  if Pos('"last_health_result": "issues_found"', Content) > 0 then
+  if Pos('"install_result": "partial"', Content) > 0 then
   begin
     BootstrapOK := False;
-    MsgBox('Some dependencies failed to install.' + #13#10 + #13#10 + 'The installer will still complete, but MiMo may not work until you run Repair.' + #13#10 + #13#10 + 'You can launch MiMo Installer from the Start Menu to repair.', mbInformation, MB_OK);
+    MsgBox('Some dependencies failed to install.' + #13#10 + #13#10 + 'Check the log at:' + #13#10 + '{app}\logs\bootstrapper.log' + #13#10 + #13#10 + 'You can run Repair from the Start Menu to retry failed components.', mbInformation, MB_OK);
+  end
+  else if Pos('"install_result": "failed"', Content) > 0 then
+  begin
+    BootstrapOK := False;
+    MsgBox('Installation failed. No dependencies were installed.' + #13#10 + #13#10 + 'Check the log at:' + #13#10 + '{app}\logs\bootstrapper.log', mbError, MB_OK);
   end;
 end;
