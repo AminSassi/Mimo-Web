@@ -58,7 +58,7 @@ Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; Value
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "MIMO_HOME"; ValueData: "{app}"; Flags: uninsdeletevalue; Check: not IsPortableMode
 
 [Run]
-Filename: "{app}\bootstrapper\MiMoBootstrapper.exe"; Parameters: "--first-run --install-dir ""{app}"""; StatusMsg: "Installing dependencies (Node.js, Git, MiMo CLI)..."; Flags: nowait postinstall
+Filename: "{app}\bootstrapper\MiMoBootstrapper.exe"; Parameters: "--first-run --install-dir ""{app}"""; StatusMsg: "Installing dependencies (Node.js, Git, MiMo CLI)..."; Flags: postinstall
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\data"
