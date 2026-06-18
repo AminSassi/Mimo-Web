@@ -1,0 +1,10 @@
+build/
+__pycache__/
+*.pyc
+*.spec
+*.log
+portable.flag
+install_state.json
+install_transaction.json
+*.egg-info/
+.env
