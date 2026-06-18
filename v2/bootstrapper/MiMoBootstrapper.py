@@ -564,8 +564,10 @@ def _ts():
 
 
 def first_run(install_dir, progress_cb=None):
-    ensure_dirs(install_dir)
-    logger = MiMoLogger("bootstrapper", get_log_dir(install_dir), get_version())
+    portable = is_portable(install_dir)
+    ensure_dirs(install_dir, portable=portable)
+    log_dir = get_log_dir(install_dir, portable=portable)
+    logger = MiMoLogger("bootstrapper", log_dir, get_version())
     logger.install_start()
     log_entries = [(_ts(), "INFO", "Bootstrapper started")]
     state = StateManager(install_dir)
@@ -601,16 +603,18 @@ def first_run(install_dir, progress_cb=None):
 
 
 def health_check_only(install_dir):
-    ensure_dirs(install_dir)
-    logger = MiMoLogger("bootstrapper", get_log_dir(install_dir), get_version())
+    portable = is_portable(install_dir)
+    ensure_dirs(install_dir, portable=portable)
+    logger = MiMoLogger("bootstrapper", get_log_dir(install_dir, portable=portable), get_version())
     checker = HealthChecker(install_dir, logger)
     issues = checker.health_check()
     return issues
 
 
 def repair_only(install_dir, progress_cb=None):
-    ensure_dirs(install_dir)
-    logger = MiMoLogger("repair", get_log_dir(install_dir), get_version())
+    portable = is_portable(install_dir)
+    ensure_dirs(install_dir, portable=portable)
+    logger = MiMoLogger("repair", get_log_dir(install_dir, portable=portable), get_version())
     checker = HealthChecker(install_dir, logger)
     issues = checker.health_check()
     if issues:
