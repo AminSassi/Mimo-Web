@@ -72,6 +72,48 @@ MAX_REPAIR_ATTEMPTS = 3
 STATE_SCHEMA_VERSION = 1
 
 
+def _migrate_0_to_1(state):
+    state["install_result"] = state.get("install_result", "pending")
+    state["last_install_time"] = state.get("last_install_time")
+    if "deps" in state:
+        for key in ["node", "npm", "git"]:
+            if key in state["deps"]:
+                old = state["deps"][key]
+                if isinstance(old, dict):
+                    status = old.get("status", "unknown")
+                    if status in ("ok", "installed"):
+                        old["status"] = "installed"
+                    elif status == "missing":
+                        old["status"] = "not_installed"
+                    else:
+                        old["status"] = status
+    if "mimo" in state and isinstance(state["mimo"], dict):
+        status = state["mimo"].get("status", "unknown")
+        if status in ("ok", "installed"):
+            state["mimo"]["status"] = "installed"
+        elif status == "missing":
+            state["mimo"]["status"] = "not_installed"
+    state["schema_version"] = 1
+    return state
+
+
+MIGRATIONS = {
+    0: _migrate_0_to_1,
+}
+
+
+def _migrate_state(state):
+    current = state.get("schema_version", 0)
+    if current > STATE_SCHEMA_VERSION:
+        return state, False, "newer"
+    if current == STATE_SCHEMA_VERSION:
+        return state, False, "current"
+    if current in MIGRATIONS:
+        state = MIGRATIONS[current](state)
+    state["schema_version"] = STATE_SCHEMA_VERSION
+    return state, True, "migrated"
+
+
 class StateManager:
     def __init__(self, install_dir):
         self.install_dir = install_dir
@@ -80,7 +122,6 @@ class StateManager:
 
     def _load(self):
         default = {
-            "schema_version": STATE_SCHEMA_VERSION,
             "version": get_version(),
             "install_dir": self.install_dir,
             "installed_at": None,
@@ -105,13 +146,25 @@ class StateManager:
             try:
                 with open(self.state_path, "r") as f:
                     saved = json.load(f)
-                saved["schema_version"] = STATE_SCHEMA_VERSION
+                saved, changed, status = _migrate_state(saved)
+                if status == "newer":
+                    raise ValueError("State created by newer version")
+                if changed:
+                    bak = self.state_path + ".bak"
+                    try:
+                        import shutil as _shutil
+                        _shutil.copy2(self.state_path, bak)
+                    except Exception:
+                        pass
                 for k, v in default.items():
                     if k not in saved:
                         saved[k] = v
                 return saved
+            except ValueError:
+                pass
             except Exception:
                 pass
+        default["schema_version"] = STATE_SCHEMA_VERSION
         return default
 
     def save(self):
@@ -309,19 +362,43 @@ def add_to_path(dirs):
 
 
 def download_file(url, dest, progress_cb=None, max_retries=3):
+    tmp_path = dest + ".tmp"
     for attempt in range(max_retries):
         try:
             def report(block, block_size, total_size):
                 if progress_cb and total_size > 0:
                     pct = min(block * block_size / total_size * 100, 100)
                     progress_cb(pct)
-            urllib.request.urlretrieve(url, dest, reporthook=report)
+            urllib.request.urlretrieve(url, tmp_path, reporthook=report)
+            os.replace(tmp_path, dest)
             return True
         except Exception:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
             continue
     return False
+
+
+def cleanup_stale_tmp(install_dir, max_age_hours=24):
+    temp_dir = os.path.join(
+        os.environ.get("TEMP", os.path.join(install_dir, "temp")), "mimo_install"
+    )
+    if not os.path.exists(temp_dir):
+        return
+    cutoff = time.time() - (max_age_hours * 3600)
+    for fname in os.listdir(temp_dir):
+        if fname.endswith(".tmp"):
+            fpath = os.path.join(temp_dir, fname)
+            try:
+                if os.path.getmtime(fpath) < cutoff:
+                    os.remove(fpath)
+            except Exception:
+                pass
 
 
 def verify_hash(filepath, expected_sha256):
@@ -632,6 +709,7 @@ def first_run(install_dir, progress_cb=None):
         logger.error("Another installation is running (install.lock exists)")
         return False
 
+    cleanup_stale_tmp(install_dir)
     logger.install_start()
     log_entries = [(_ts(), "INFO", "Bootstrapper started")]
     state = StateManager(install_dir)
