@@ -64,6 +64,48 @@ DEP_HASHES = {}
 MAX_REPAIR_ATTEMPTS = 3
 
 
+def find_runtime_dir(install_dir, key):
+    runtime_base = os.path.join(install_dir, "runtime", key)
+    if not os.path.isdir(runtime_base):
+        return None
+    for entry in os.listdir(runtime_base):
+        full = os.path.join(runtime_base, entry)
+        if os.path.isdir(full):
+            return full
+    if key == "git":
+        cmd_dir = os.path.join(runtime_base, "cmd")
+        if os.path.isdir(cmd_dir):
+            return cmd_dir
+    return runtime_base if os.path.isdir(runtime_base) else None
+
+
+def get_npm_path(install_dir):
+    node_dir = find_runtime_dir(install_dir, "node")
+    if node_dir:
+        npm = os.path.join(node_dir, "npm.cmd")
+        if os.path.isfile(npm):
+            return npm
+    return "npm"
+
+
+def get_node_path(install_dir):
+    node_dir = find_runtime_dir(install_dir, "node")
+    if node_dir:
+        exe = os.path.join(node_dir, "node.exe")
+        if os.path.isfile(exe):
+            return exe
+    return "node"
+
+
+def get_git_path(install_dir):
+    git_dir = find_runtime_dir(install_dir, "git")
+    if git_dir:
+        exe = os.path.join(git_dir, "git.exe")
+        if os.path.isfile(exe):
+            return exe
+    return "git"
+
+
 STATE_SCHEMA_VERSION = 1
 
 
@@ -495,9 +537,10 @@ class HealthChecker:
                 self.state.update_dep(key, "missing")
                 issues.append(f"{key}_missing")
                 self.log.dependency_missing(DEPENDENCIES[key]["name"])
-        ok, version = self.check_dep("npm")
-        if ok:
-            self.state.update_dep("npm", "ok", version)
+        npm_path = get_npm_path(self.install_dir)
+        npm_ok, npm_ver, _ = run_cmd([npm_path, "--version"])
+        if npm_ok:
+            self.state.update_dep("npm", "ok", npm_ver)
         else:
             node_ok = self.state.state["deps"]["node"]["status"] == "ok"
             if node_ok:
@@ -614,6 +657,24 @@ class HealthChecker:
                 with zipfile.ZipFile(zip_path, 'r') as zf:
                     zf.extractall(target_dir)
                 self.log.info(f"Extracted {dep['name']} to {target_dir}")
+                path_add = os.path.join(self.install_dir, dep.get("path_add", dep.get("target_subdir", f"runtime\\{key}")))
+                if not os.path.isdir(path_add):
+                    self.log.step_failed(f"verify_{key}", f"expected dir not found: {path_add}")
+                    return False
+                if key == "node":
+                    node_exe = os.path.join(path_add, "node.exe")
+                    npm_cmd = os.path.join(path_add, "npm.cmd")
+                    if not os.path.isfile(node_exe):
+                        self.log.step_failed(f"verify_{key}", "node.exe not found after extraction")
+                        return False
+                    if not os.path.isfile(npm_cmd):
+                        self.log.step_failed(f"verify_{key}", "npm.cmd not found after extraction")
+                        return False
+                elif key == "git":
+                    git_exe = os.path.join(path_add, "git.exe")
+                    if not os.path.isfile(git_exe):
+                        self.log.step_failed(f"verify_{key}", "git.exe not found after extraction")
+                        return False
             except Exception as e:
                 self.log.step_failed(f"extract_{key}", str(e))
                 return False
@@ -675,30 +736,32 @@ class HealthChecker:
         return ok
 
     def _install_mimo(self, progress_cb=None):
-        node_dir = os.path.join(self.install_dir, DEPENDENCIES["node"]["path_add"])
-        if os.path.isdir(node_dir):
+        npm_path = get_npm_path(self.install_dir)
+        node_dir = find_runtime_dir(self.install_dir, "node")
+        if node_dir:
             os.environ["PATH"] = node_dir + ";" + os.environ.get("PATH", "")
-        npm_ok, _, _ = run_cmd(["npm", "--version"])
+        npm_ok, _, _ = run_cmd([npm_path, "--version"])
         if npm_ok:
             if progress_cb:
                 progress_cb("Installing MiMo via npm...")
             for attempt in range(3):
-                ok, _, err = run_cmd(["npm", "install", "-g", "@mimo-ai/cli@0.1.0"], timeout=300)
+                ok, _, err = run_cmd([npm_path, "install", "-g", "@mimo-ai/cli@0.1.0"], timeout=300)
                 if ok:
                     self.state.update_mimo("installed")
                     self.log.dependency_installed("MiMo", "npm")
                     return True
                 self.log.step_failed(f"npm_install_attempt_{attempt+1}", err)
                 if attempt < 2:
-                    run_cmd(["npm", "cache", "clean", "--force"], timeout=30)
+                    run_cmd([npm_path, "cache", "clean", "--force"], timeout=30)
         if progress_cb:
             progress_cb("Trying git clone fallback...")
+        git_path = get_git_path(self.install_dir)
         mimo_repo = "https://github.com/XiaomiMiMo/MiMo-Code.git"
         mimo_install_dir = os.path.join(os.path.expanduser("~"), "MimoCode")
         if os.path.exists(mimo_install_dir):
-            ok, _, _ = run_cmd(["git", "-C", mimo_install_dir, "pull"], timeout=60)
+            ok, _, _ = run_cmd([git_path, "-C", mimo_install_dir, "pull"], timeout=60)
         else:
-            ok, _, _ = run_cmd(["git", "clone", mimo_repo, mimo_install_dir], timeout=120)
+            ok, _, _ = run_cmd([git_path, "clone", mimo_repo, mimo_install_dir], timeout=120)
         if ok:
             self.state.update_mimo("installed")
             self.log.dependency_installed("MiMo", "git")
