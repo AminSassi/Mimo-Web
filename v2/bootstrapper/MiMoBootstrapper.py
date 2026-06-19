@@ -57,7 +57,6 @@ DEPENDENCIES = {
         "verify_cmd": ["git", "--version"],
         "exe_names": ["git.exe", "git"],
         "size_mb": 44,
-        "optional": True,
     },
 }
 
@@ -533,6 +532,9 @@ class HealthChecker:
                 if os.path.isdir(full) and full not in os.environ.get("PATH", ""):
                     os.environ["PATH"] = full + ";" + os.environ.get("PATH", "")
         refresh_path()
+        npm_global = os.path.join(os.environ.get("APPDATA", ""), "npm")
+        if os.path.isdir(npm_global) and npm_global not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = npm_global + ";" + os.environ.get("PATH", "")
         for key in ["node", "git"]:
             ok, version = self.check_dep(key)
             if ok:
@@ -540,11 +542,8 @@ class HealthChecker:
                 self.log.dependency_detected(DEPENDENCIES[key]["name"], version)
             else:
                 self.state.update_dep(key, "missing")
-                if DEPENDENCIES[key].get("optional"):
-                    self.log.dependency_detected(DEPENDENCIES[key]["name"], "not installed (optional)")
-                else:
-                    issues.append(f"{key}_missing")
-                    self.log.dependency_missing(DEPENDENCIES[key]["name"])
+                issues.append(f"{key}_missing")
+                self.log.dependency_missing(DEPENDENCIES[key]["name"])
         npm_path = get_npm_path(self.install_dir)
         npm_ok, npm_ver, _ = run_cmd([npm_path, "--version"])
         if npm_ok:
@@ -613,14 +612,11 @@ class HealthChecker:
                     else:
                         self.log.step_failed("verify_npm_after_node", "npm not found after Node install")
             elif issue == "git_missing":
-                if DEPENDENCIES["git"].get("optional"):
-                    self.log.dependency_detected("Git", "skipped (optional)")
-                else:
-                    write_progress(self.install_dir, "install_git")
-                    self.log.step_start("install_git")
-                    if self._install_dep("git", progress_cb):
-                        repaired.append("git")
-                        self.log.step_complete("install_git")
+                write_progress(self.install_dir, "install_git")
+                self.log.step_start("install_git")
+                if self._install_dep("git", progress_cb):
+                    repaired.append("git")
+                    self.log.step_complete("install_git")
             elif issue == "npm_missing":
                 write_progress(self.install_dir, "verify_npm")
                 self.log.step_start("verify_npm")
