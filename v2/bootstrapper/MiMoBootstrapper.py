@@ -416,13 +416,14 @@ def verify_hash(filepath, expected_sha256):
 
 def silent_install(installer_path, args):
     try:
+        quoted_path = f'"{installer_path}"'
         if installer_path.lower().endswith(".msi"):
-            cmd = ["msiexec", "/i", installer_path] + args
+            cmd = f'msiexec /i {quoted_path} {" ".join(args)}'
         else:
-            cmd = [installer_path] + args
-        result = subprocess.run(cmd, capture_output=True, timeout=600,
+            cmd = f'{quoted_path} {" ".join(args)}'
+        result = subprocess.run(cmd, capture_output=True, timeout=600, shell=True,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return result.returncode == 0
+        return result.returncode in (0, 3010)
     except Exception:
         return False
 

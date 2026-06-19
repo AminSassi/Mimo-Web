@@ -152,7 +152,7 @@ def build_gui(version):
 
 def copy_assets(version):
     print("[5/6] Copying assets...")
-    for src_name in ["preflight.cmd", "MiMoSetup.iss"]:
+    for src_name in ["preflight.cmd", "MiMoSetup.iss", "launch_mimo.cmd"]:
         src = os.path.join(SCRIPT_DIR, src_name)
         dst = os.path.join(BUILD_DIR, src_name)
         if os.path.exists(src):
