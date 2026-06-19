@@ -273,7 +273,7 @@ class TransactionManager:
 def run_cmd(cmd, timeout=30):
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
+            cmd, capture_output=True, text=True, timeout=timeout, shell=True,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
         )
         return result.returncode == 0, result.stdout.strip(), result.stderr.strip()
@@ -535,6 +535,17 @@ class HealthChecker:
                 if self._install_dep("node", progress_cb):
                     repaired.append("node")
                     self.log.step_complete("install_node")
+                    self.log.step_start("verify_npm_after_node")
+                    refresh_path()
+                    for pd in DEPENDENCIES["node"].get("path_dirs", []):
+                        if os.path.isdir(pd):
+                            os.environ["PATH"] = pd + ";" + os.environ.get("PATH", "")
+                    npm_ok, npm_ver = self.check_dep("npm")
+                    if npm_ok:
+                        self.state.update_dep("npm", "ok", npm_ver)
+                        self.log.step_complete("verify_npm_after_node")
+                    else:
+                        self.log.step_failed("verify_npm_after_node", "npm not found after Node install")
             elif issue == "git_missing":
                 self.log.step_start("install_git")
                 if self._install_dep("git", progress_cb):
@@ -543,6 +554,9 @@ class HealthChecker:
             elif issue == "npm_missing":
                 self.log.step_start("verify_npm")
                 refresh_path()
+                for pd in DEPENDENCIES["node"].get("path_dirs", []):
+                    if os.path.isdir(pd):
+                        os.environ["PATH"] = pd + ";" + os.environ.get("PATH", "")
                 ok, version = self.check_dep("npm")
                 if ok:
                     self.state.update_dep("npm", "ok", version)
@@ -606,6 +620,10 @@ class HealthChecker:
         return ok
 
     def _install_mimo(self, progress_cb=None):
+        refresh_path()
+        for pd in DEPENDENCIES.get("node", {}).get("path_dirs", []):
+            if os.path.isdir(pd):
+                os.environ["PATH"] = pd + ";" + os.environ.get("PATH", "")
         npm_ok, _, _ = run_cmd(["npm", "--version"])
         if npm_ok:
             if progress_cb:
