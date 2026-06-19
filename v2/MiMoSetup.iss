@@ -1,7 +1,7 @@
 [Setup]
 AppName=MiMo Auto
 AppVersion=2.2.0
-AppPublisher=MiMo Team
+AppPublisher=Sassi
 AppPublisherURL=https://mimo.xiaomi.com
 AppSupportURL=https://mimo.xiaomi.com/support
 DefaultDirName={autopf}\MiMo Auto
@@ -64,9 +64,10 @@ Type: filesandordirs; Name: "{app}\data"
 Type: filesandordirs; Name: "{app}\logs"
 Type: files; Name: "{app}\install_state.json"
 Type: files; Name: "{app}\portable.flag"
+Type: files; Name: "{app}\install_progress.txt"
 
 [Run]
-Filename: "{app}\bootstrapper\MiMoBootstrapper.exe"; Parameters: "--first-run --install-dir ""{app}"""; StatusMsg: "Installing dependencies (Node.js, Git, MiMo CLI)..."; Flags: postinstall runminimized waituntilterminated; AfterInstall: CheckBootstrapResult
+Filename: "{app}\bootstrapper\MiMoBootstrapper.exe"; Parameters: "--first-run --install-dir ""{app}"""; StatusMsg: "Installing Node.js, MiMo CLI..."; Flags: postinstall runminimized waituntilterminated; AfterInstall: CheckBootstrapResult
 
 [Code]
 var
@@ -93,23 +94,28 @@ begin
   if not FileExists(StateFile) then
   begin
     BootstrapOK := False;
-    MsgBox('Bootstrapper did not create install_state.json. Installation may be incomplete.' + #13#10 + #13#10 + 'Check the logs at:' + #13#10 + '{app}\logs\bootstrapper.log', mbError, MB_OK);
+    MsgBox('Installation may be incomplete.' + #13#10 + 'Check: ' + ExpandConstant('{app}') + '\logs\bootstrapper.log', mbError, MB_OK);
     Exit;
   end;
   if not LoadStringFromFile(StateFile, Content) then
   begin
     BootstrapOK := False;
-    MsgBox('Failed to read install_state.json. Installation may be incomplete.', mbError, MB_OK);
+    MsgBox('Failed to read install state.', mbError, MB_OK);
     Exit;
   end;
   if Pos('"install_result": "partial"', Content) > 0 then
   begin
     BootstrapOK := False;
-    MsgBox('Some dependencies failed to install.' + #13#10 + #13#10 + 'Check the log at:' + #13#10 + '{app}\logs\bootstrapper.log' + #13#10 + #13#10 + 'You can run Repair from the Start Menu to retry failed components.', mbInformation, MB_OK);
+    MsgBox('Some dependencies failed to install.' + #13#10 + 'Check: ' + ExpandConstant('{app}') + '\logs\bootstrapper.log' + #13#10 + #13#10 + 'Run Repair from the Start Menu to retry.', mbInformation, MB_OK);
   end
   else if Pos('"install_result": "failed"', Content) > 0 then
   begin
     BootstrapOK := False;
-    MsgBox('Installation failed. No dependencies were installed.' + #13#10 + #13#10 + 'Check the log at:' + #13#10 + '{app}\logs\bootstrapper.log', mbError, MB_OK);
+    MsgBox('Installation failed.' + #13#10 + 'Check: ' + ExpandConstant('{app}') + '\logs\bootstrapper.log', mbError, MB_OK);
   end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
 end;

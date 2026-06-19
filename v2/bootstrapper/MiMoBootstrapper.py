@@ -8,6 +8,7 @@ import json
 import shutil
 import subprocess
 import hashlib
+import re
 import time
 import urllib.request
 import zipfile
@@ -56,11 +57,13 @@ DEPENDENCIES = {
         "verify_cmd": ["git", "--version"],
         "exe_names": ["git.exe", "git"],
         "size_mb": 44,
+        "optional": True,
     },
 }
 
 DEP_HASHES = {}
 
+MIN_MIMO_VERSION = (0, 1, 0)
 MAX_REPAIR_ATTEMPTS = 3
 
 
@@ -206,8 +209,10 @@ class StateManager:
 
     def save(self):
         os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
-        with open(self.state_path, "w") as f:
+        tmp_path = self.state_path + ".tmp"
+        with open(tmp_path, "w") as f:
             json.dump(self.state, f, indent=2)
+        os.replace(tmp_path, self.state_path)
 
     def update_dep(self, key, status, version=""):
         if key in self.state["deps"]:
@@ -535,8 +540,11 @@ class HealthChecker:
                 self.log.dependency_detected(DEPENDENCIES[key]["name"], version)
             else:
                 self.state.update_dep(key, "missing")
-                issues.append(f"{key}_missing")
-                self.log.dependency_missing(DEPENDENCIES[key]["name"])
+                if DEPENDENCIES[key].get("optional"):
+                    self.log.dependency_detected(DEPENDENCIES[key]["name"], "not installed (optional)")
+                else:
+                    issues.append(f"{key}_missing")
+                    self.log.dependency_missing(DEPENDENCIES[key]["name"])
         npm_path = get_npm_path(self.install_dir)
         npm_ok, npm_ver, _ = run_cmd([npm_path, "--version"])
         if npm_ok:
@@ -553,8 +561,15 @@ class HealthChecker:
                 mimo_ok = True
                 mimo_ver = "found (no --version)"
         if mimo_ok:
-            self.state.update_mimo("ok", mimo_ver)
-            self.log.dependency_detected("MiMo", mimo_ver)
+            m = re.search(r'(\d+)\.(\d+)\.(\d+)', mimo_ver)
+            parsed = tuple(int(x) for x in m.groups()) if m else (0, 0, 0)
+            if parsed != MIN_MIMO_VERSION:
+                self.log.dependency_missing("MiMo")
+                self.state.update_mimo("missing")
+                issues.append("mimo_missing")
+            else:
+                self.state.update_mimo("ok", mimo_ver)
+                self.log.dependency_detected("MiMo", mimo_ver)
         else:
             self.state.update_mimo("missing")
             issues.append("mimo_missing")
@@ -581,10 +596,12 @@ class HealthChecker:
         repaired = []
         for issue in issues:
             if issue == "node_missing":
+                write_progress(self.install_dir, "install_node")
                 self.log.step_start("install_node")
                 if self._install_dep("node", progress_cb):
                     repaired.append("node")
                     self.log.step_complete("install_node")
+                    write_progress(self.install_dir, "verify_npm")
                     self.log.step_start("verify_npm_after_node")
                     node_dir = os.path.join(self.install_dir, DEPENDENCIES["node"]["path_add"])
                     if os.path.isdir(node_dir):
@@ -596,11 +613,16 @@ class HealthChecker:
                     else:
                         self.log.step_failed("verify_npm_after_node", "npm not found after Node install")
             elif issue == "git_missing":
-                self.log.step_start("install_git")
-                if self._install_dep("git", progress_cb):
-                    repaired.append("git")
-                    self.log.step_complete("install_git")
+                if DEPENDENCIES["git"].get("optional"):
+                    self.log.dependency_detected("Git", "skipped (optional)")
+                else:
+                    write_progress(self.install_dir, "install_git")
+                    self.log.step_start("install_git")
+                    if self._install_dep("git", progress_cb):
+                        repaired.append("git")
+                        self.log.step_complete("install_git")
             elif issue == "npm_missing":
+                write_progress(self.install_dir, "verify_npm")
                 self.log.step_start("verify_npm")
                 node_dir = os.path.join(self.install_dir, DEPENDENCIES["node"]["path_add"])
                 if os.path.isdir(node_dir):
@@ -611,6 +633,7 @@ class HealthChecker:
                     repaired.append("npm")
                     self.log.step_complete("verify_npm")
             elif issue == "mimo_missing":
+                write_progress(self.install_dir, "install_mimo")
                 self.log.step_start("install_mimo")
                 if self._install_mimo(progress_cb):
                     repaired.append("mimo")
@@ -745,28 +768,16 @@ class HealthChecker:
             if progress_cb:
                 progress_cb("Installing MiMo via npm...")
             for attempt in range(3):
-                ok, _, err = run_cmd([npm_path, "install", "-g", "@mimo-ai/cli@0.1.0"], timeout=300)
+                ok, out, err = run_cmd([npm_path, "install", "-g", "@mimo-ai/cli@0.1.0"], timeout=300)
                 if ok:
                     self.state.update_mimo("installed")
                     self.log.dependency_installed("MiMo", "npm")
                     return True
-                self.log.step_failed(f"npm_install_attempt_{attempt+1}", err)
+                detail = f"stdout={out.strip()}; stderr={err.strip()}"
+                self.log.step_failed(f"npm_install_attempt_{attempt+1}", detail)
                 if attempt < 2:
                     run_cmd([npm_path, "cache", "clean", "--force"], timeout=30)
-        if progress_cb:
-            progress_cb("Trying git clone fallback...")
-        git_path = get_git_path(self.install_dir)
-        mimo_repo = "https://github.com/XiaomiMiMo/MiMo-Code.git"
-        mimo_install_dir = os.path.join(os.path.expanduser("~"), "MimoCode")
-        if os.path.exists(mimo_install_dir):
-            ok, _, _ = run_cmd([git_path, "-C", mimo_install_dir, "pull"], timeout=60)
-        else:
-            ok, _, _ = run_cmd([git_path, "clone", mimo_repo, mimo_install_dir], timeout=120)
-        if ok:
-            self.state.update_mimo("installed")
-            self.log.dependency_installed("MiMo", "git")
-            return True
-        self.log.step_failed("install_mimo", "all methods failed")
+        self.log.step_failed("install_mimo", "npm install failed after 3 attempts")
         return False
 
 
@@ -801,6 +812,15 @@ def _write_bootstrap_log(install_dir, entries):
         with open(log_path, "a", encoding="utf-8") as f:
             for ts, level, msg in entries:
                 f.write(f"[{ts}] [{level}] {msg}\n")
+    except Exception:
+        pass
+
+
+def write_progress(install_dir, step):
+    progress_path = os.path.join(install_dir, "install_progress.txt")
+    try:
+        with open(progress_path, "w", encoding="utf-8") as f:
+            f.write(step)
     except Exception:
         pass
 
@@ -866,6 +886,7 @@ def first_run(install_dir, progress_cb=None):
             log_entries.append((_ts(), "INFO", "All components healthy"))
 
         install_result = "partial" if issues_after else "success"
+        write_progress(install_dir, install_result)
         if issues_after:
             log_entries.append((_ts(), "WARNING", f"Install partial — remaining: {issues_after}"))
         else:
@@ -916,6 +937,14 @@ def main():
     parser.add_argument("--install-dir", type=str, help="Installation directory")
     parser.add_argument("--json", action="store_true", help="Output JSON format")
     args = parser.parse_args()
+    if args.first_run and sys.platform == "win32":
+        try:
+            import ctypes
+            hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+            if hwnd:
+                ctypes.windll.user32.ShowWindow(hwnd, 0)
+        except Exception:
+            pass
     install_dir = args.install_dir or DEFAULT_INSTALL_DIR
     if args.first_run:
         ok = first_run(install_dir)
