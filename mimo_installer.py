@@ -335,6 +335,39 @@ def copy_to_clipboard(text):
         return False
 
 
+def create_desktop_shortcut(port=3000):
+    try:
+        import win32com.client
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        shortcut_path = os.path.join(desktop, "MiMo Web.lnk")
+        shell = win32com.client.Dispatch("WScript.Shell")
+        shortcut = shell.CreateShortCut(shortcut_path)
+        shortcut.Targetpath = "cmd.exe"
+        shortcut.Arguments = f'/c start "" "http://localhost:{port}"'
+        shortcut.WorkingDirectory = os.path.join(os.path.expanduser("~"), "Documents", "Mimo Projects")
+        shortcut.Description = "Open MiMo Web Interface"
+        shortcut.save()
+        return True
+    except Exception:
+        try:
+            desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+            shortcut_path = os.path.join(desktop, "MiMo Web.lnk")
+            ps_cmd = (
+                f'$ws = New-Object -ComObject WScript.Shell; '
+                f'$s = $ws.CreateShortcut("{shortcut_path}"); '
+                f'$s.TargetPath = "cmd.exe"; '
+                f'$s.Arguments = "/c start http://localhost:{port}"; '
+                f'$s.WorkingDirectory = "{os.path.join(os.path.expanduser("~"), "Documents", "Mimo Projects")}"; '
+                f'$s.Description = "Open MiMo Web Interface"; '
+                f'$s.Save()'
+            )
+            subprocess.run(["powershell", "-Command", ps_cmd],
+                          capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+            return os.path.exists(shortcut_path)
+        except Exception:
+            return False
+
+
 class InstallerEngine:
     def __init__(self):
         self.log_lines = []
@@ -602,7 +635,7 @@ class InstallerEngine:
         if npm_ok:
             cb("Installing via npm...")
             for attempt in range(3):
-                ok, _, err = run_cmd(["npm", "install", "-g", "@mimo-ai/cli"], timeout=300)
+                ok, _, err = run_cmd(["npm", "install", "-g", "@mimo-ai/cli@0.1.0"], timeout=300)
                 if ok:
                     self.report["mimo_installed"] = True
                     self.summary["mimo"]["installed"] = True
@@ -1310,11 +1343,17 @@ class InstallerWindow(ctk.CTk):
             found, missing = self.engine.detect_deps(self._log_progress)
             if missing:
                 self._set_progress(25, "Installing dependencies...")
-                self.engine.install_deps(self._log_progress, missing, self._approve_dialog)
+                deps_ok = self.engine.install_deps(self._log_progress, missing, self._approve_dialog)
             else:
+                deps_ok = True
                 self._log_progress("All dependencies found")
             if self.engine.cancelled:
                 self.after(500, lambda: self._finish(False, "Installation Cancelled"))
+                return
+            if not deps_ok:
+                self.after(1000, lambda: self._finish(False, "Dependency Installation Failed",
+                    "One or more dependencies failed to install.\n\nFix: Check your internet connection and antivirus, then click Retry.",
+                    phase="Dependencies"))
                 return
             self._set_progress(45, "Installing MiMo...")
             self._log_progress("\nInstalling MiMo...")
@@ -1338,10 +1377,12 @@ class InstallerWindow(ctk.CTk):
             self._set_progress(100, "Complete")
             time.sleep(0.3)
             if launched:
+                create_desktop_shortcut(actual_port)
                 self.complete_subtitle.configure(
                     text=f"\U0001f680 MiMo is ready! Opening browser to http://localhost:{actual_port}...")
                 self.after(500, lambda: self._finish(True, "Installation Complete", phase="Complete"))
             else:
+                create_desktop_shortcut(port)
                 self.complete_subtitle.configure(
                     text="MiMo was installed but the web server didn't start automatically.")
                 self.after(500, lambda: self._finish(True, "Installed with Warnings"))

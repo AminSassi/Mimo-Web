@@ -10,6 +10,7 @@ import subprocess
 import hashlib
 import time
 import urllib.request
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -26,16 +27,14 @@ DEPENDENCIES = {
     "node": {
         "name": "Node.js LTS",
         "check_cmd": ["node", "--version"],
-        "download": "https://nodejs.org/dist/v20.15.1/node-v20.15.1-x64.msi",
-        "installer_args": ["/quiet", "/norestart"],
-        "path_dirs": [
-            os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"), "nodejs"),
-            os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"), "Nodejs"),
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "nodejs"),
-        ],
+        "download": "https://nodejs.org/dist/v20.15.1/node-v20.15.1-win-x64.zip",
+        "install_type": "zip",
+        "zip_inner_dir": "node-v20.15.1-win-x64",
+        "target_subdir": "runtime\\node",
+        "path_add": "runtime\\node\\node-v20.15.1-win-x64",
         "verify_cmd": ["node", "--version"],
         "exe_names": ["node.exe", "node"],
-        "size_mb": 32,
+        "size_mb": 28,
     },
     "npm": {
         "name": "npm",
@@ -49,22 +48,18 @@ DEPENDENCIES = {
     "git": {
         "name": "Git",
         "check_cmd": ["git", "--version"],
-        "download": "https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe",
-        "installer_args": ["/VERYSILENT", "/NORESTART", "/NOCANCEL"],
-        "path_dirs": [
-            os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"), "Git", "cmd"),
-            os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"), "Git", "bin"),
-        ],
+        "download": "https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/MinGit-2.45.2-64-bit.zip",
+        "install_type": "zip",
+        "zip_inner_dir": None,
+        "target_subdir": "runtime\\git",
+        "path_add": "runtime\\git\\cmd",
         "verify_cmd": ["git", "--version"],
         "exe_names": ["git.exe", "git"],
-        "size_mb": 55,
+        "size_mb": 44,
     },
 }
 
-DEP_HASHES = {
-    "node": {"20.15.1": "b139ba1b82807918af40fbed49a5b529f67ba198e87bcabdac907b734ff83ab5"},
-    "git": {"2.45.2": "ce022a6a19e58bbbd4823f51cf798b006b4a683b93b0616a7bb5beeee901da98"},
-}
+DEP_HASHES = {}
 
 MAX_REPAIR_ATTEMPTS = 3
 
@@ -449,6 +444,11 @@ class HealthChecker:
 
     def check_dep(self, key):
         dep = DEPENDENCIES[key]
+        path_add = dep.get("path_add")
+        if path_add:
+            full = os.path.join(self.install_dir, path_add)
+            if os.path.isdir(full) and full not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = full + ";" + os.environ.get("PATH", "")
         ok, out, err = run_cmd(dep["check_cmd"])
         if not ok:
             exe_name = dep["exe_names"][0].replace(".exe", "")
@@ -479,6 +479,12 @@ class HealthChecker:
 
     def health_check(self):
         issues = []
+        for key in ["node", "git"]:
+            path_add = DEPENDENCIES[key].get("path_add")
+            if path_add:
+                full = os.path.join(self.install_dir, path_add)
+                if os.path.isdir(full) and full not in os.environ.get("PATH", ""):
+                    os.environ["PATH"] = full + ";" + os.environ.get("PATH", "")
         refresh_path()
         for key in ["node", "git"]:
             ok, version = self.check_dep(key)
@@ -537,10 +543,9 @@ class HealthChecker:
                     repaired.append("node")
                     self.log.step_complete("install_node")
                     self.log.step_start("verify_npm_after_node")
-                    refresh_path()
-                    for pd in DEPENDENCIES["node"].get("path_dirs", []):
-                        if os.path.isdir(pd):
-                            os.environ["PATH"] = pd + ";" + os.environ.get("PATH", "")
+                    node_dir = os.path.join(self.install_dir, DEPENDENCIES["node"]["path_add"])
+                    if os.path.isdir(node_dir):
+                        os.environ["PATH"] = node_dir + ";" + os.environ.get("PATH", "")
                     npm_ok, npm_ver = self.check_dep("npm")
                     if npm_ok:
                         self.state.update_dep("npm", "ok", npm_ver)
@@ -554,10 +559,9 @@ class HealthChecker:
                     self.log.step_complete("install_git")
             elif issue == "npm_missing":
                 self.log.step_start("verify_npm")
-                refresh_path()
-                for pd in DEPENDENCIES["node"].get("path_dirs", []):
-                    if os.path.isdir(pd):
-                        os.environ["PATH"] = pd + ";" + os.environ.get("PATH", "")
+                node_dir = os.path.join(self.install_dir, DEPENDENCIES["node"]["path_add"])
+                if os.path.isdir(node_dir):
+                    os.environ["PATH"] = node_dir + ";" + os.environ.get("PATH", "")
                 ok, version = self.check_dep("npm")
                 if ok:
                     self.state.update_dep("npm", "ok", version)
@@ -579,6 +583,56 @@ class HealthChecker:
             return False
         temp_dir = os.path.join(os.environ.get("TEMP", os.path.join(self.install_dir, "temp")), "mimo_install")
         os.makedirs(temp_dir, exist_ok=True)
+
+        if dep.get("install_type") == "zip":
+            zip_path = os.path.join(temp_dir, f"{key}.zip")
+            if progress_cb:
+                progress_cb(f"Downloading {dep['name']}...")
+            if not download_file(url, zip_path):
+                self.log.step_failed(f"download_{key}", "download failed")
+                return False
+            hashes = DEP_HASHES.get(key, {})
+            expected = None
+            for ver, h in hashes.items():
+                if ver in url:
+                    expected = h
+                    break
+            if expected and not verify_hash(zip_path, expected):
+                self.log.step_failed(f"verify_{key}", "hash mismatch")
+                try:
+                    os.remove(zip_path)
+                except Exception:
+                    pass
+                return False
+            if progress_cb:
+                progress_cb(f"Extracting {dep['name']}...")
+            target_dir = os.path.join(self.install_dir, dep.get("target_subdir", f"runtime\\{key}"))
+            try:
+                if os.path.exists(target_dir):
+                    shutil.rmtree(target_dir)
+                os.makedirs(target_dir, exist_ok=True)
+                with zipfile.ZipFile(zip_path, 'r') as zf:
+                    zf.extractall(target_dir)
+                self.log.info(f"Extracted {dep['name']} to {target_dir}")
+            except Exception as e:
+                self.log.step_failed(f"extract_{key}", str(e))
+                return False
+            path_add = os.path.join(self.install_dir, dep.get("path_add", dep.get("target_subdir", f"runtime\\{key}")))
+            if os.path.isdir(path_add):
+                os.environ["PATH"] = path_add + ";" + os.environ.get("PATH", "")
+            ok, version = self.check_dep(key)
+            if ok:
+                self.state.update_dep(key, "installed", version)
+                self.log.dependency_installed(dep["name"], version)
+            else:
+                self.state.update_dep(key, "installed_pending")
+                self.log.warn(f"{dep['name']} extracted but not found in PATH")
+            try:
+                os.remove(zip_path)
+            except Exception:
+                pass
+            return ok
+
         ext = os.path.splitext(url)[1]
         installer_path = os.path.join(temp_dir, f"{key}{ext}")
         if progress_cb:
@@ -621,10 +675,9 @@ class HealthChecker:
         return ok
 
     def _install_mimo(self, progress_cb=None):
-        refresh_path()
-        for pd in DEPENDENCIES.get("node", {}).get("path_dirs", []):
-            if os.path.isdir(pd):
-                os.environ["PATH"] = pd + ";" + os.environ.get("PATH", "")
+        node_dir = os.path.join(self.install_dir, DEPENDENCIES["node"]["path_add"])
+        if os.path.isdir(node_dir):
+            os.environ["PATH"] = node_dir + ";" + os.environ.get("PATH", "")
         npm_ok, _, _ = run_cmd(["npm", "--version"])
         if npm_ok:
             if progress_cb:
@@ -749,13 +802,14 @@ def first_run(install_dir, progress_cb=None):
             issues_after = []
             log_entries.append((_ts(), "INFO", "All components healthy"))
 
+        install_result = "partial" if issues_after else "success"
         if issues_after:
-            state.mark_install_result("partial")
             log_entries.append((_ts(), "WARNING", f"Install partial — remaining: {issues_after}"))
         else:
-            state.mark_install_result("success")
             log_entries.append((_ts(), "INFO", "Install success"))
 
+        state = StateManager(install_dir)
+        state.mark_install_result(install_result)
         state.mark_installed()
         state.increment_launches()
         state.save()
