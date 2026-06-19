@@ -17,7 +17,7 @@ DisableProgramGroupPage=yes
 DisableReadyPage=no
 DisableFinishedPage=yes
 SetupIconFile=mimo.ico
-UninstallDisplayIcon={app}\mimo_launch.exe
+UninstallDisplayIcon={app}\mimo.ico
 AppId={{9C12A3B4-55D1-4A88-9F11-ABC123456789}
 VersionInfoVersion=2.2.0.0
 VersionInfoDescription=MiMo Auto Installer
@@ -44,11 +44,13 @@ Source: "dist\MiMoInstaller.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\mimo_launch.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "bootstrapper\*"; DestDir: "{app}\bootstrapper"; Flags: recursesubdirs ignoreversion
 Source: "preflight.cmd"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "launch_mimo.cmd"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "mimo.ico"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
-Name: "{group}\MiMo Auto"; Filename: "{app}\mimo_launch.exe"; Comment: "Launch MiMo Auto"
+Name: "{group}\MiMo Web"; Filename: "{app}\launch_mimo.cmd"; Comment: "Open MiMo Web UI"; IconFilename: "{app}\mimo.ico"
 Name: "{group}\Uninstall MiMo Auto"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\MiMo Auto"; Filename: "{app}\mimo_launch.exe"; Tasks: desktopicon
+Name: "{commondesktop}\MiMo Web"; Filename: "{app}\launch_mimo.cmd"; Tasks: desktopicon; IconFilename: "{app}\mimo.ico"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "Additional shortcuts:"; Flags: checkedonce

@@ -185,7 +185,7 @@ class RollbackRegistry:
         return True
 
     def _rollback_uninstall_mimo(self, ctx):
-        npm_ok, _, _ = _run_cmd(["npm", "uninstall", "-g", "@mimo-ai/cli"], timeout=60)
+        npm_ok, _, _ = _run_cmd(["npm", "uninstall", "-g", "@mimo-ai/cli@0.1.0"], timeout=60)
         return True
 
     def _remove_from_path(self, dirs):

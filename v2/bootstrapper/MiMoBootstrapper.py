@@ -611,7 +611,7 @@ class HealthChecker:
             if progress_cb:
                 progress_cb("Installing MiMo via npm...")
             for attempt in range(3):
-                ok, _, err = run_cmd(["npm", "install", "-g", "@mimo-ai/cli"], timeout=300)
+                ok, _, err = run_cmd(["npm", "install", "-g", "@mimo-ai/cli@0.1.0"], timeout=300)
                 if ok:
                     self.state.update_mimo("installed")
                     self.log.dependency_installed("MiMo", "npm")
